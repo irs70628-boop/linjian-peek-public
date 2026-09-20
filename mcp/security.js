@@ -196,7 +196,7 @@ export class JwtOAuthVerifier {
   }
 }
 
-export function createBearerMiddleware({ verifier, resourceMetadataUrl }) {
+export function createBearerMiddleware({ verifier, resourceMetadataUrl, allowUnauthenticated = false }) {
   return async (req, res, next) => {
     const challenge = (error = "invalid_token", description = "A valid user authorization is required") => {
       const value = authChallenge(resourceMetadataUrl, [], error, description);
@@ -205,6 +205,7 @@ export function createBearerMiddleware({ verifier, resourceMetadataUrl }) {
     };
     try {
       const header = String(req.headers.authorization || "");
+      if (!header && allowUnauthenticated) return next();
       const match = header.match(/^Bearer\s+(.+)$/i);
       if (!match) return challenge("invalid_token", "Missing or malformed Authorization bearer token");
       const auth = await verifier.verifyAccessToken(match[1]);

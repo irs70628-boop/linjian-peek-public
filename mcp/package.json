@@ -1,6 +1,6 @@
 {
   "name": "linjian-unified-mcp",
-  "version": "0.3.8.8-security",
+  "version": "0.3.8.9-security",
   "private": true,
   "type": "module",
   "description": "Public MCP server for 掌心窗 with OAuth resource-server enforcement and ChatGPT tool annotations.",

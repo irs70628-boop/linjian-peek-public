@@ -25,7 +25,15 @@ try {
 const OAUTH_RESOURCE_METADATA_URL = OAUTH_CONFIG ? `${OAUTH_CONFIG.resource}/.well-known/oauth-protected-resource` : "";
 const OAUTH_VERIFIER = OAUTH_CONFIG ? new JwtOAuthVerifier(OAUTH_CONFIG) : null;
 const OAUTH_BEARER_MIDDLEWARE = OAUTH_VERIFIER
-  ? createBearerMiddleware({ verifier: OAUTH_VERIFIER, resourceMetadataUrl: OAUTH_RESOURCE_METADATA_URL })
+  ? createBearerMiddleware({
+      verifier: OAUTH_VERIFIER,
+      resourceMetadataUrl: OAUTH_RESOURCE_METADATA_URL,
+      // ChatGPT must be able to initialize the MCP session and read tools/list
+      // before it can discover each tool's OAuth securitySchemes. Tool execution
+      // remains fail-closed in installToolSecurity(), which validates authInfo,
+      // scopes, and the authorized user identity before invoking callbacks.
+      allowUnauthenticated: true
+    })
   : null;
 
 function requireOAuthConfiguration(req, res, next) {
