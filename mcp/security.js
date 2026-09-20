@@ -30,7 +30,7 @@ const REVERSIBLE_WRITE_TOOLS = new Set([
 
 const REVERSIBLE_CONTROL_TOOLS = new Set([
   "set_guidian_config", "mark_guidian_returned", "save_known_app", "add_locked_app", "remove_locked_app",
-  "add_screen_break_app", "draft_xhs_comment"
+  "add_screen_break_app", "draft_xhs_comment", "peek_screen"
 ]);
 
 const DESTRUCTIVE_TOOLS = new Set([
