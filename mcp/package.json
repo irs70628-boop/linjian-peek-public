@@ -1,11 +1,13 @@
 {
   "name": "linjian-unified-mcp",
-  "version": "0.3.8.8",
+  "version": "0.3.8.8-security",
   "private": true,
   "type": "module",
-  "description": "Public MCP server for 掌心窗: screenshot, guard tools, configurable app control, active care, visits, and wallet approvals.",
+  "description": "Public MCP server for 掌心窗 with OAuth resource-server enforcement and ChatGPT tool annotations.",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "check": "node --check server.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=20"
@@ -13,6 +15,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",
     "express": "^4.19.2",
+    "jose": "^6.1.0",
     "zod": "^3.23.8"
   }
 }

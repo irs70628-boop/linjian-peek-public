@@ -5,9 +5,38 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { z } from "zod";
 import fs from "fs";
 import path from "path";
+import {
+  JwtOAuthVerifier,
+  createBearerMiddleware,
+  installToolSecurity,
+  oauthConfigFromEnv,
+  protectedResourceMetadata
+} from "./security.js";
 
 const PORT = Number(process.env.PORT || 8787);
 const RAW_LINJIAN_URL = (process.env.LINJIAN_URL || "").trim();
+let OAUTH_CONFIG = null;
+let OAUTH_CONFIG_ERROR = "";
+try {
+  OAUTH_CONFIG = oauthConfigFromEnv(process.env);
+} catch (error) {
+  OAUTH_CONFIG_ERROR = String(error?.message || error);
+}
+const OAUTH_RESOURCE_METADATA_URL = OAUTH_CONFIG ? `${OAUTH_CONFIG.resource}/.well-known/oauth-protected-resource` : "";
+const OAUTH_VERIFIER = OAUTH_CONFIG ? new JwtOAuthVerifier(OAUTH_CONFIG) : null;
+const OAUTH_BEARER_MIDDLEWARE = OAUTH_VERIFIER
+  ? createBearerMiddleware({ verifier: OAUTH_VERIFIER, resourceMetadataUrl: OAUTH_RESOURCE_METADATA_URL })
+  : null;
+
+function requireOAuthConfiguration(req, res, next) {
+  if (!OAUTH_BEARER_MIDDLEWARE) {
+    return res.status(503).json({
+      error: "oauth_not_configured",
+      error_description: OAUTH_CONFIG_ERROR || "OAuth environment variables are missing"
+    });
+  }
+  return OAUTH_BEARER_MIDDLEWARE(req, res, next);
+}
 
 function normalizeBaseUrl(value = "") {
   return String(value || "").trim().replace(/\/$/, "");
@@ -991,6 +1020,7 @@ function registerWalletTakeoutTools(server, { includeUnified = false } = {}) {
 
 function makeWalletTakeoutServer() {
   const server = new McpServer({ name: "掌心窗小金库外卖", version: "0.3.8.8" });
+  installToolSecurity(server, { resourceMetadataUrl: OAUTH_RESOURCE_METADATA_URL });
   server.tool("linjian_status", "检查掌心窗后端、MCP 配置，以及当前是否使用小金库/外卖专用 schema。", {}, async () => {
     const configErrors = [];
     if (!LINJIAN_URL_CANDIDATES.length) configErrors.push("Missing env LINJIAN_URL");
@@ -1004,6 +1034,7 @@ function makeWalletTakeoutServer() {
 
 function makeServer() {
   const server = new McpServer({ name: "掌心窗", version: "0.3.8.8" });
+  installToolSecurity(server, { resourceMetadataUrl: OAUTH_RESOURCE_METADATA_URL });
   const commandBackedTools = new Set([
     "peek_screen", "get_screen_nodes", "tap_text", "input_text", "draft_xhs_comment", "xhs_comment", "send_visible_comment_after_confirmation",
     "add_guardian_calendar_event", "care_action", "trigger_guidian", "mark_guidian_returned",
@@ -2181,12 +2212,28 @@ app.use((req, res, next) => {
 
 app.use(express.json({ limit: "32mb" }));
 app.get("/", (_req, res) => res.type("text/plain").send("掌心窗 unified MCP is running. Use /mcp for Streamable HTTP, or /sse for SSE."));
+app.get("/.well-known/oauth-protected-resource", (_req, res) => {
+  if (!OAUTH_CONFIG) return res.status(503).json({ error: "oauth_not_configured", error_description: OAUTH_CONFIG_ERROR });
+  return res.json(protectedResourceMetadata({
+    resource: OAUTH_CONFIG.resource,
+    issuer: OAUTH_CONFIG.issuer,
+    documentationUrl: OAUTH_CONFIG.documentationUrl
+  }));
+});
 app.get("/health", (_req, res) => res.json({
   ok: true,
   service: "linjian-public-mcp",
   version: "0.3.8.8",
   has_url: Boolean(LINJIAN_URL_CANDIDATES.length),
   has_token: Boolean(LINJIAN_TOKEN),
+  oauth_required: true,
+  oauth_configured: Boolean(OAUTH_CONFIG),
+  oauth_configuration_error: OAUTH_CONFIG_ERROR || undefined,
+  oauth_resource: OAUTH_CONFIG?.resource || "",
+  oauth_issuer: OAUTH_CONFIG?.issuer || "",
+  oauth_audience: OAUTH_CONFIG?.audience || "",
+  oauth_allowed_subject_count: OAUTH_CONFIG?.allowedSubjects?.length || 0,
+  oauth_scopes: ["zhangxinchuang.read", "zhangxinchuang.write", "zhangxinchuang.control", "zhangxinchuang.destructive"],
   configured_linjian_url: RAW_LINJIAN_URL || "",
   effective_linjian_url: effectiveLinjianUrl(),
   fallback_linjian_urls: LINJIAN_URL_CANDIDATES.filter((u) => u !== RAW_LINJIAN_URL),
@@ -2207,22 +2254,22 @@ app.get("/health", (_req, res) => res.json({
   wallet_takeout_tools: Array.from(WALLET_TAKEOUT_ACTIONS),
   stability_note: "v0.3.8.8 同步公开版版本信息；普通 /mcp 提前注册统一入口，新增 /mcp-wallet 专用端点，并把专注模式工具前置注册，兼容部分客户端不暴露新增工具的问题。"
 }));
-app.post("/mcp", async (req, res) => {
+app.post("/mcp", requireOAuthConfiguration, async (req, res) => {
   try { const server = makeServer(); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); res.on("close", () => transport.close()); await server.connect(transport); await transport.handleRequest(req, res, req.body); }
   catch (err) { console.error(err); if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: String(err?.message || err) }, id: null }); }
 });
 app.get("/mcp", (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp for Streamable HTTP MCP." }));
-app.post("/mcp-wallet", async (req, res) => {
+app.post("/mcp-wallet", requireOAuthConfiguration, async (req, res) => {
   try { const server = makeWalletTakeoutServer(); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); res.on("close", () => transport.close()); await server.connect(transport); await transport.handleRequest(req, res, req.body); }
   catch (err) { console.error(err); if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: String(err?.message || err) }, id: null }); }
 });
 app.get("/mcp-wallet", (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp-wallet for wallet/takeout Streamable HTTP MCP.", endpoint: "/mcp-wallet" }));
 const sseTransports = new Map();
-app.get("/sse", async (_req, res) => {
+app.get("/sse", requireOAuthConfiguration, async (_req, res) => {
   try { const transport = new SSEServerTransport("/messages", res); sseTransports.set(transport.sessionId, transport); res.on("close", () => { sseTransports.delete(transport.sessionId); transport.close(); }); await makeServer().connect(transport); }
   catch (err) { console.error(err); if (!res.headersSent) res.status(500).end(String(err?.message || err)); }
 });
-app.post("/messages", async (req, res) => { const sessionId = req.query.sessionId; const transport = sseTransports.get(sessionId); if (!transport) return res.status(404).send("No SSE transport for sessionId"); await transport.handlePostMessage(req, res, req.body); });
+app.post("/messages", requireOAuthConfiguration, async (req, res) => { const sessionId = req.query.sessionId; const transport = sseTransports.get(sessionId); if (!transport) return res.status(404).send("No SSE transport for sessionId"); await transport.handlePostMessage(req, res, req.body); });
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`掌心窗 unified MCP listening on 0.0.0.0:${PORT}`);
   console.log(`LINJIAN_URL=${RAW_LINJIAN_URL || "<missing>"}`);
