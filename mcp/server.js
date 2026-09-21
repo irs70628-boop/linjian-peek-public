@@ -24,6 +24,14 @@ try {
 }
 const OAUTH_RESOURCE_METADATA_URL = OAUTH_CONFIG ? `${OAUTH_CONFIG.resource}/.well-known/oauth-protected-resource` : "";
 const OAUTH_VERIFIER = OAUTH_CONFIG ? new JwtOAuthVerifier(OAUTH_CONFIG) : null;
+const CHATGPT_SAFE_READ_TOOL_NAMES = new Set([
+  "get_focus_status",
+  "get_window_whisper",
+  "list_diary_books",
+  "list_diary_entries",
+  "read_diary_entry",
+  "get_companion_actions"
+]);
 const OAUTH_BEARER_MIDDLEWARE = OAUTH_VERIFIER
   ? createBearerMiddleware({
       verifier: OAUTH_VERIFIER,
@@ -43,7 +51,7 @@ function requireOAuthConfiguration(req, res, next) {
       error_description: OAUTH_CONFIG_ERROR || "OAuth environment variables are missing"
     });
   }
-    // ChatGPT must read the MCP handshake and tools/list before it can expose
+  // ChatGPT must read the MCP handshake and tools/list before it can expose
   // each tool's OAuth security scheme. Only discovery is public: tools/call
   // still passes through JWT verification here, then scope/user checks inside
   // installToolSecurity() before the tool callback can run.
@@ -55,7 +63,7 @@ function requireOAuthConfiguration(req, res, next) {
     "tools/list"
   ]);
   if (!req.headers.authorization && publicDiscoveryMethods.has(method)) return next();
-  return OAUTH_BEARER_MIDDLEWARE(req, res, next);  
+  return OAUTH_BEARER_MIDDLEWARE(req, res, next);
 }
 
 function normalizeBaseUrl(value = "") {
@@ -2199,6 +2207,19 @@ function makeServer() {
   return server;
 }
 
+function makeChatGptServer() {
+  const server = makeServer();
+  for (const name of Object.keys(server._registeredTools)) {
+    if (!CHATGPT_SAFE_READ_TOOL_NAMES.has(name)) delete server._registeredTools[name];
+  }
+  const registeredNames = new Set(Object.keys(server._registeredTools));
+  const missingNames = [...CHATGPT_SAFE_READ_TOOL_NAMES].filter((name) => !registeredNames.has(name));
+  if (missingNames.length) {
+    throw new Error(`ChatGPT safe tool set is missing registered tools: ${missingNames.join(", ")}`);
+  }
+  return server;
+}
+
 const app = express();
 
 app.use((req, res, next) => {
@@ -2267,6 +2288,8 @@ app.get("/health", (_req, res) => res.json({
   focus_tools: true,
   focus_tool_names: ["get_focus_status", "start_focus_mode", "end_focus_mode", "set_focus_plan", "reply_focus_request", "approve_focus_unlock", "deny_focus_unlock"],
   mcp_wallet_endpoint: "/mcp-wallet",
+  mcp_chatgpt_endpoint: "/mcp-chatgpt",
+  mcp_chatgpt_tools: [...CHATGPT_SAFE_READ_TOOL_NAMES],
   schema_exposure_fix: true,
   focus_schema_exposure_fix: true,
   priority_tool: "wallet_takeout_action",
@@ -2279,6 +2302,11 @@ app.post("/mcp", requireOAuthConfiguration, async (req, res) => {
   catch (err) { console.error(err); if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: String(err?.message || err) }, id: null }); }
 });
 app.get("/mcp", (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp for Streamable HTTP MCP." }));
+app.post("/mcp-chatgpt", requireOAuthConfiguration, async (req, res) => {
+  try { const server = makeChatGptServer(); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); res.on("close", () => transport.close()); await server.connect(transport); await transport.handleRequest(req, res, req.body); }
+  catch (err) { console.error(err); if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: String(err?.message || err) }, id: null }); }
+});
+app.get("/mcp-chatgpt", (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp-chatgpt for the ChatGPT-safe Streamable HTTP MCP." }));
 app.post("/mcp-wallet", requireOAuthConfiguration, async (req, res) => {
   try { const server = makeWalletTakeoutServer(); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); res.on("close", () => transport.close()); await server.connect(transport); await transport.handleRequest(req, res, req.body); }
   catch (err) { console.error(err); if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: String(err?.message || err) }, id: null }); }
