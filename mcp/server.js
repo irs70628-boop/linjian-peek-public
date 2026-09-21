@@ -32,7 +32,7 @@ const OAUTH_BEARER_MIDDLEWARE = OAUTH_VERIFIER
       // before it can discover each tool's OAuth securitySchemes. Tool execution
       // remains fail-closed in installToolSecurity(), which validates authInfo,
       // scopes, and the authorized user identity before invoking callbacks.
-      allowUnauthenticated: true
+      allowUnauthenticated: false
     })
   : null;
 
