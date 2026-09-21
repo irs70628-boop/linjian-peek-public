@@ -43,7 +43,19 @@ function requireOAuthConfiguration(req, res, next) {
       error_description: OAUTH_CONFIG_ERROR || "OAuth environment variables are missing"
     });
   }
-  return OAUTH_BEARER_MIDDLEWARE(req, res, next);
+    // ChatGPT must read the MCP handshake and tools/list before it can expose
+  // each tool's OAuth security scheme. Only discovery is public: tools/call
+  // still passes through JWT verification here, then scope/user checks inside
+  // installToolSecurity() before the tool callback can run.
+  const method = String(req.body?.method || "");
+  const publicDiscoveryMethods = new Set([
+    "initialize",
+    "notifications/initialized",
+    "ping",
+    "tools/list"
+  ]);
+  if (!req.headers.authorization && publicDiscoveryMethods.has(method)) return next();
+  return OAUTH_BEARER_MIDDLEWARE(req, res, next);  
 }
 
 function normalizeBaseUrl(value = "") {
