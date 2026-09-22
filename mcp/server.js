@@ -2252,6 +2252,30 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: "32mb" }));
+const DIAGNOSTIC_ACCESS_PATHS = new Set([
+  "/mcp-chatgpt",
+  "/.well-known/oauth-protected-resource"
+]);
+app.use((req, res, next) => {
+  if (!DIAGNOSTIC_ACCESS_PATHS.has(req.path)) return next();
+  const startedAt = process.hrtime.bigint();
+  const mcpMethod = typeof req.body?.method === "string" ? req.body.method : null;
+  res.once("finish", () => {
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    console.log(JSON.stringify({
+      event: "mcp_access",
+      timestamp: new Date().toISOString(),
+      method: req.method,
+      path: req.path,
+      mcp_method: mcpMethod,
+      status: res.statusCode,
+      duration_ms: Number(durationMs.toFixed(1)),
+      user_agent: String(req.get("user-agent") || "").slice(0, 200)
+    }));
+  });
+  return next();
+});
+
 app.get("/", (_req, res) => res.type("text/plain").send("掌心窗 unified MCP is running. Use /mcp for Streamable HTTP, or /sse for SSE."));
 app.get("/.well-known/oauth-protected-resource", (_req, res) => {
   if (!OAUTH_CONFIG) return res.status(503).json({ error: "oauth_not_configured", error_description: OAUTH_CONFIG_ERROR });
